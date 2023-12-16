@@ -306,13 +306,14 @@ func (a *API) signupVerify(r *http.Request, ctx context.Context, conn *storage.C
 			return terr
 		}
 
+		if terr = user.Confirm(tx); terr != nil {
+			return internalServerError("Error confirming user").WithInternalError(terr)
+		}
+
 		if terr = triggerEventHooks(ctx, tx, SignupEvent, user, config); terr != nil {
 			return terr
 		}
 
-		if terr = user.Confirm(tx); terr != nil {
-			return internalServerError("Error confirming user").WithInternalError(terr)
-		}
 		return nil
 	})
 	if err != nil {
