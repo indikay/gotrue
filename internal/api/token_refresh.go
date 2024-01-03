@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/supabase/gotrue/internal/metering"
-	"github.com/supabase/gotrue/internal/models"
-	"github.com/supabase/gotrue/internal/storage"
+	"github.com/supabase/auth/internal/metering"
+	"github.com/supabase/auth/internal/models"
+	"github.com/supabase/auth/internal/storage"
+	"github.com/supabase/auth/internal/utilities"
 )
 
 const retryLoopDuration = 5.0
@@ -50,7 +51,7 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 	for retry && time.Since(retryStart).Seconds() < retryLoopDuration {
 		retry = false
 
-		user, _, session, err := models.FindUserWithRefreshToken(db, params.RefreshToken, false)
+		user, token, session, err := models.FindUserWithRefreshToken(db, params.RefreshToken, false)
 		if err != nil {
 			if models.IsNotFoundError(err) {
 				return oauthError("invalid_grant", "Invalid Refresh Token: Refresh Token Not Found")
@@ -63,21 +64,16 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 		}
 
 		if session != nil {
-			var notAfter time.Time
+			result := session.CheckValidity(retryStart, &token.UpdatedAt, config.Sessions.Timebox, config.Sessions.InactivityTimeout)
 
-			if session.NotAfter != nil {
-				notAfter = *session.NotAfter
-			}
+			switch result {
+			case models.SessionValid:
+				// do nothing
 
-			if config.Sessions.Timebox != nil {
-				sessionEndsAt := session.CreatedAt.Add((*config.Sessions.Timebox).Abs())
+			case models.SessionTimedOut:
+				return oauthError("invalid_grant", "Invalid Refresh Token: Session Expired (Inactivity)")
 
-				if notAfter.IsZero() || notAfter.After(sessionEndsAt) {
-					notAfter = sessionEndsAt
-				}
-			}
-
-			if !notAfter.IsZero() && a.Now().After(notAfter) {
+			default:
 				return oauthError("invalid_grant", "Invalid Refresh Token: Session Expired")
 			}
 		}
@@ -111,6 +107,60 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 				return internalServerError(terr.Error())
 			}
 
+			if a.config.Sessions.SinglePerUser {
+				sessions, terr := models.FindAllSessionsForUser(tx, user.ID, true /* forUpdate */)
+				if models.IsNotFoundError(terr) {
+					// because forUpdate was set, and the
+					// previous check outside the
+					// transaction found a user and
+					// session, but now we're getting a
+					// IsNotFoundError, this means that the
+					// user is locked and we need to retry
+					// in a few milliseconds
+					retry = true
+					return terr
+				} else if terr != nil {
+					return internalServerError(terr.Error())
+				}
+
+				sessionTag := session.DetermineTag(config.Sessions.Tags)
+
+				// go through all sessions of the user and
+				// check if the current session is the user's
+				// most recently refreshed valid session
+				for _, s := range sessions {
+					if s.ID == session.ID {
+						// current session, skip it
+						continue
+					}
+
+					if s.CheckValidity(retryStart, nil, config.Sessions.Timebox, config.Sessions.InactivityTimeout) != models.SessionValid {
+						// session is not valid so it
+						// can't be regarded as active
+						// on the user
+						continue
+					}
+
+					if s.DetermineTag(config.Sessions.Tags) != sessionTag {
+						// if tags are specified,
+						// ignore sessions with a
+						// mismatching tag
+						continue
+					}
+
+					// since token is not the refresh token
+					// of s, we can't use it's UpdatedAt
+					// time to compare!
+					if s.LastRefreshedAt(nil).After(session.LastRefreshedAt(&token.UpdatedAt)) {
+						// session is not the most
+						// recently active one
+						return oauthError("invalid_grant", "Invalid Refresh Token: Session Expired (Revoked by Newer Login)")
+					}
+				}
+
+				// this session is the user's active session
+			}
+
 			// refresh token row and session are locked at this
 			// point, cannot be concurrently refreshed
 
@@ -118,7 +168,7 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 
 			if token.Revoked {
 				activeRefreshToken, terr := session.FindCurrentlyActiveRefreshToken(tx)
-				if terr != nil {
+				if terr != nil && !models.IsNotFoundError(terr) {
 					return internalServerError(terr.Error())
 				}
 
@@ -149,7 +199,7 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 							}
 						}
 
-						return oauthError("invalid_grant", "Invalid Refresh Token: Already Used").WithInternalMessage("Possible abuse attempt: %v", token.ID)
+						return storage.NewCommitWithError(oauthError("invalid_grant", "Invalid Refresh Token: Already Used").WithInternalMessage("Possible abuse attempt: %v", token.ID))
 					}
 				}
 			}
@@ -167,9 +217,34 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 				issuedToken = newToken
 			}
 
-			tokenString, expiresAt, terr = generateAccessToken(tx, user, issuedToken.SessionId, &config.JWT)
+			tokenString, expiresAt, terr = a.generateAccessToken(ctx, tx, user, issuedToken.SessionId, models.TokenRefresh)
 			if terr != nil {
+				httpErr, ok := terr.(*HTTPError)
+				if ok {
+					return httpErr
+				}
 				return internalServerError("error generating jwt token").WithInternalError(terr)
+			}
+
+			refreshedAt := a.Now()
+			session.RefreshedAt = &refreshedAt
+
+			userAgent := r.Header.Get("User-Agent")
+			if userAgent != "" {
+				session.UserAgent = &userAgent
+			} else {
+				session.UserAgent = nil
+			}
+
+			ipAddress := utilities.GetIPAddress(r)
+			if ipAddress != "" {
+				session.IP = &ipAddress
+			} else {
+				session.IP = nil
+			}
+
+			if terr := session.UpdateOnlyRefreshInfo(tx); terr != nil {
+				return internalServerError("failed to update session information").WithInternalError(terr)
 			}
 
 			newTokenResponse = &AccessTokenResponse{

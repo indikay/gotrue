@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,9 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/gotrue/internal/conf"
-	"github.com/supabase/gotrue/internal/crypto"
-	"github.com/supabase/gotrue/internal/models"
+	"github.com/supabase/auth/internal/conf"
+	"github.com/supabase/auth/internal/crypto"
+	"github.com/supabase/auth/internal/models"
 )
 
 type VerifyTestSuite struct {
@@ -178,7 +179,7 @@ func (ts *VerifyTestSuite) TestVerifySecureEmailChange() {
 
 		// Generate access token for request
 		var token string
-		token, _, err = generateAccessToken(ts.API.db, u, nil, &ts.Config.JWT)
+		token, _, err = ts.API.generateAccessToken(context.Background(), ts.API.db, u, nil, models.MagicLink)
 		require.NoError(ts.T(), err)
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 

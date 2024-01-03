@@ -1,15 +1,16 @@
 package models
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/gotrue/internal/conf"
-	"github.com/supabase/gotrue/internal/crypto"
-	"github.com/supabase/gotrue/internal/storage"
-	"github.com/supabase/gotrue/internal/storage/test"
+	"github.com/supabase/auth/internal/conf"
+	"github.com/supabase/auth/internal/crypto"
+	"github.com/supabase/auth/internal/storage"
+	"github.com/supabase/auth/internal/storage/test"
 )
 
 const modelsTestConfig = "../../hack/test.env"
@@ -302,4 +303,79 @@ func (ts *UserTestSuite) TestConfirmPhoneChange() {
 
 	require.NotNil(ts.T(), identity.IdentityData)
 	require.Equal(ts.T(), identity.IdentityData["phone"], "987654321")
+}
+
+func (ts *UserTestSuite) TestUpdateUserEmailSuccess() {
+	userA, err := NewUser("", "foo@example.com", "", "authenticated", nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(userA))
+
+	primaryIdentity, err := NewIdentity(userA, "email", map[string]interface{}{
+		"sub":   userA.ID.String(),
+		"email": "foo@example.com",
+	})
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(primaryIdentity))
+
+	secondaryIdentity, err := NewIdentity(userA, "google", map[string]interface{}{
+		"sub":   userA.ID.String(),
+		"email": "bar@example.com",
+	})
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(secondaryIdentity))
+
+	// UpdateUserEmail should not do anything and the user's email should still use the primaryIdentity
+	require.NoError(ts.T(), userA.UpdateUserEmail(ts.db))
+	require.Equal(ts.T(), primaryIdentity.GetEmail(), userA.GetEmail())
+
+	// remove primary identity
+	require.NoError(ts.T(), ts.db.Destroy(primaryIdentity))
+
+	// UpdateUserEmail should update the user to use the secondary identity's email
+	require.NoError(ts.T(), userA.UpdateUserEmail(ts.db))
+	require.Equal(ts.T(), secondaryIdentity.GetEmail(), userA.GetEmail())
+}
+
+func (ts *UserTestSuite) TestUpdateUserEmailFailure() {
+	userA, err := NewUser("", "foo@example.com", "", "authenticated", nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(userA))
+
+	primaryIdentity, err := NewIdentity(userA, "email", map[string]interface{}{
+		"sub":   userA.ID.String(),
+		"email": "foo@example.com",
+	})
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(primaryIdentity))
+
+	secondaryIdentity, err := NewIdentity(userA, "google", map[string]interface{}{
+		"sub":   userA.ID.String(),
+		"email": "bar@example.com",
+	})
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(secondaryIdentity))
+
+	userB, err := NewUser("", "bar@example.com", "", "authenticated", nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(userB))
+
+	// remove primary identity
+	require.NoError(ts.T(), ts.db.Destroy(primaryIdentity))
+
+	// UpdateUserEmail should fail with the email unique constraint violation error
+	//  since userB is using the secondary identity's email
+	require.ErrorIs(ts.T(), userA.UpdateUserEmail(ts.db), UserEmailUniqueConflictError{})
+	require.Equal(ts.T(), primaryIdentity.GetEmail(), userA.GetEmail())
+}
+
+func (ts *UserTestSuite) TestSetPasswordTooLong() {
+	user, err := NewUser("", "", strings.Repeat("a", crypto.MaxPasswordLength), "", nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.db.Create(user))
+
+	err = user.SetPassword(ts.db.Context(), strings.Repeat("a", crypto.MaxPasswordLength+1))
+	require.Error(ts.T(), err)
+
+	err = user.SetPassword(ts.db.Context(), strings.Repeat("a", crypto.MaxPasswordLength))
+	require.NoError(ts.T(), err)
 }

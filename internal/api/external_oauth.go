@@ -7,9 +7,9 @@ import (
 
 	"github.com/mrjones/oauth"
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/gotrue/internal/api/provider"
-	"github.com/supabase/gotrue/internal/observability"
-	"github.com/supabase/gotrue/internal/storage"
+	"github.com/supabase/auth/internal/api/provider"
+	"github.com/supabase/auth/internal/observability"
+	"github.com/supabase/auth/internal/storage"
 )
 
 // OAuthProviderData contains the userData and token returned by the oauth provider
@@ -82,7 +82,7 @@ func (a *API) oAuthCallback(ctx context.Context, r *http.Request, providerType s
 
 	userData, err := oAuthProvider.GetUserData(ctx, token)
 	if err != nil {
-		return nil, internalServerError("Error getting user email from external provider").WithInternalError(err)
+		return nil, internalServerError("Error getting user profile from external provider").WithInternalError(err)
 	}
 
 	switch externalProvider := oAuthProvider.(type) {

@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/supabase/gotrue/internal/api/provider"
-	"github.com/supabase/gotrue/internal/conf"
-	"github.com/supabase/gotrue/internal/models"
-	"github.com/supabase/gotrue/internal/observability"
-	"github.com/supabase/gotrue/internal/storage"
+	"github.com/supabase/auth/internal/api/provider"
+	"github.com/supabase/auth/internal/conf"
+	"github.com/supabase/auth/internal/models"
+	"github.com/supabase/auth/internal/observability"
+	"github.com/supabase/auth/internal/storage"
 )
 
 // IdTokenGrantParams are the parameters the IdTokenGrant method accepts
@@ -51,10 +50,17 @@ func (p *IdTokenGrantParams) getProvider(ctx context.Context, config *conf.Globa
 		issuer = provider.IssuerGoogle
 		acceptableClientIDs = append(acceptableClientIDs, config.External.Google.ClientID...)
 
-	case p.Provider == "azure" || p.Issuer == provider.IssuerAzureCommon || p.Issuer == provider.IssuerAzureOrganizations:
+	case p.Provider == "azure" || provider.IsAzureIssuer(p.Issuer):
+		issuer = p.Issuer
+		if issuer == "" || !provider.IsAzureIssuer(issuer) {
+			detectedIssuer, err := provider.DetectAzureIDTokenIssuer(ctx, p.IdToken)
+			if err != nil {
+				return nil, nil, "", nil, badRequestError("Unable to detect issuer in ID token for Azure provider").WithInternalError(err)
+			}
+			issuer = detectedIssuer
+		}
 		cfg = &config.External.Azure
 		providerType = "azure"
-		issuer = p.Issuer
 		acceptableClientIDs = append(acceptableClientIDs, config.External.Azure.ClientID...)
 
 	case p.Provider == "facebook" || p.Issuer == provider.IssuerFacebook:
@@ -139,6 +145,18 @@ func (a *API) IdTokenGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		return oauthError("invalid request", "Bad ID token").WithInternalError(err)
 	}
 
+	userData.Metadata.EmailVerified = false
+	for _, email := range userData.Emails {
+		if email.Primary {
+			userData.Metadata.Email = email.Email
+			userData.Metadata.EmailVerified = email.Verified
+			break
+		} else {
+			userData.Metadata.Email = email.Email
+			userData.Metadata.EmailVerified = email.Verified
+		}
+	}
+
 	if idToken.Subject == "" {
 		return oauthError("invalid request", "Missing sub claim in id_token")
 	}
@@ -193,16 +211,14 @@ func (a *API) IdTokenGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 	var token *AccessTokenResponse
 	var grantParams models.GrantParams
 
+	grantParams.FillGrantParams(r)
+
 	if err := db.Transaction(func(tx *storage.Connection) error {
 		var user *models.User
 		var terr error
 
 		user, terr = a.createAccountFromExternalIdentity(tx, r, userData, providerType)
 		if terr != nil {
-			if errors.Is(terr, errReturnNil) {
-				return nil
-			}
-
 			return terr
 		}
 
@@ -213,7 +229,12 @@ func (a *API) IdTokenGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 
 		return nil
 	}); err != nil {
-		return oauthError("server_error", "Internal Server Error").WithInternalError(err)
+		switch err.(type) {
+		case *storage.CommitWithError:
+			return err
+		default:
+			return oauthError("server_error", "Internal Server Error").WithInternalError(err)
+		}
 	}
 
 	return sendJSON(w, http.StatusOK, token)

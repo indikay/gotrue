@@ -67,7 +67,6 @@ func (a *API) Settings(w http.ResponseWriter, r *http.Request) error {
 			Phone:        config.External.Phone.Enabled,
 			Zoom:         config.External.Zoom.Enabled,
 		},
-
 		DisableSignup:     config.DisableSignup,
 		MailerAutoconfirm: config.Mailer.Autoconfirm,
 		PhoneAutoconfirm:  config.Sms.Autoconfirm,
