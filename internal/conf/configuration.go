@@ -213,6 +213,8 @@ type GlobalConfiguration struct {
 	Password        PasswordConfiguration    `json:"password"`
 	JWT             JWTConfiguration         `json:"jwt"`
 	Mailer          MailerConfiguration      `json:"mailer"`
+	UseMailService  bool                     `json:"use_mail_service" split_words:"true"`
+	MailService     MailServiceConfiguration `json:"mail_service" split_words:"true"`
 	Sms             SmsProviderConfiguration `json:"sms"`
 	DisableSignup   bool                     `json:"disable_signup" split_words:"true"`
 	Webhook         WebhookConfig            `json:"webhook" split_words:"true"`
@@ -319,6 +321,12 @@ type MailerConfiguration struct {
 
 	OtpExp    uint `json:"otp_exp" split_words:"true"`
 	OtpLength int  `json:"otp_length" split_words:"true"`
+}
+
+type MailServiceConfiguration struct {
+	URL     string `json:"url"`
+	Timeout int    `json:"timeout"`
+	Retries int    `json:"retries"`
 }
 
 type PhoneProviderConfiguration struct {

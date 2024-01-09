@@ -33,6 +33,7 @@ type EmailParams struct {
 
 // NewMailer returns a new gotrue mailer
 func NewMailer(globalConfig *conf.GlobalConfiguration) Mailer {
+
 	mail := gomail.NewMessage()
 
 	// so that messages are not grouped under each other
@@ -56,10 +57,15 @@ func NewMailer(globalConfig *conf.GlobalConfiguration) Mailer {
 		}
 	}
 
-	return &TemplateMailer{
-		SiteURL: globalConfig.SiteURL,
-		Config:  globalConfig,
-		Mailer:  mailClient,
+	logrus.Info("ConfirmationMail ", globalConfig.UseMailService)
+	if globalConfig.UseMailService {
+		return NewMailService(globalConfig.SiteURL, globalConfig, mailClient)
+	} else {
+		return &TemplateMailer{
+			SiteURL: globalConfig.SiteURL,
+			Config:  globalConfig,
+			Mailer:  mailClient,
+		}
 	}
 }
 
