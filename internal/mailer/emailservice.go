@@ -48,7 +48,7 @@ func closeBody(rsp *http.Response) {
 }
 
 func (m *MailService) sendEmail(payload []byte) error {
-	logrus.Infof("sendEmail %s", m.Config.MailService.URL)
+	// logrus.Infof("sendEmail %s", m.Config.MailService.URL)
 	client := http.Client{
 		Timeout: time.Second * time.Duration(m.Config.MailService.Timeout),
 	}
@@ -245,7 +245,15 @@ func (m *MailService) RecoveryMail(user *models.User, otp, referrerURL string, e
 	}
 
 	userName := user.UserMetaData["name"]
-	body := &EmailBody{To: user.GetEmail(), Action: 13, Data: fmt.Sprintf("{\"username\":\"%s\",\"resetPasswordUrl\":\"%s\"}", userName, externalURL.ResolveReference(path).String()), Locale: user.UserMetaData["locale"].(string)}
+	if userName == nil {
+		userName = user.GetEmail()
+	}
+	locale := user.UserMetaData["locale"]
+	if locale == nil {
+		locale = "en"
+	}
+
+	body := &EmailBody{To: user.GetEmail(), Action: 13, Data: fmt.Sprintf("{\"username\":\"%s\",\"resetPasswordUrl\":\"%s\"}", userName, externalURL.ResolveReference(path).String()), Locale: locale.(string)}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
