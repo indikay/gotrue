@@ -124,7 +124,14 @@ func (m *MailService) ConfirmationMail(user *models.User, otp, referrerURL strin
 	}
 
 	userName := user.UserMetaData["name"]
-	body := &EmailBody{To: user.GetEmail(), Action: 12, Data: fmt.Sprintf("{\"username\":\"%s\",\"verifyUrl\":\"%s\"}", userName, externalURL.ResolveReference(path).String()), Locale: user.UserMetaData["locale"].(string)}
+	if userName == nil {
+		userName = user.GetEmail()
+	}
+	locale := user.UserMetaData["locale"]
+	if locale == nil {
+		locale = "en"
+	}
+	body := &EmailBody{To: user.GetEmail(), Action: 12, Data: fmt.Sprintf("{\"username\":\"%s\",\"verifyUrl\":\"%s\"}", userName.(string), externalURL.ResolveReference(path).String()), Locale: locale.(string)}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
