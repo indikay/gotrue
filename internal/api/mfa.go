@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -132,13 +131,16 @@ func (a *API) EnrollFactor(w http.ResponseWriter, r *http.Request) error {
 	}
 	svgData.End()
 
-	factor, err := models.NewFactor(user, params.FriendlyName, params.FactorType, models.FactorStateUnverified, key.Secret())
-	if err != nil {
-		return internalServerError("database error creating factor").WithInternalError(err)
-	}
+	factor := models.NewFactor(user, params.FriendlyName, params.FactorType, models.FactorStateUnverified, key.Secret())
+
 	err = a.db.Transaction(func(tx *storage.Connection) error {
 		if terr := tx.Create(factor); terr != nil {
+			pgErr := utilities.NewPostgresError(terr)
+			if pgErr.IsUniqueConstraintViolated() {
+				return badRequestError(fmt.Sprintf("a factor with the friendly name %q for this user likely already exists", factor.FriendlyName))
+			}
 			return terr
+
 		}
 		if terr := models.NewAuditLogEntry(r, tx, user, models.EnrollFactorAction, r.RemoteAddr, map[string]interface{}{
 			"factor_id": factor.ID,
@@ -171,12 +173,9 @@ func (a *API) ChallengeFactor(w http.ResponseWriter, r *http.Request) error {
 	user := getUser(ctx)
 	factor := getFactor(ctx)
 	ipAddress := utilities.GetIPAddress(r)
-	challenge, err := models.NewChallenge(factor, ipAddress)
-	if err != nil {
-		return internalServerError("Database error creating challenge").WithInternalError(err)
-	}
+	challenge := models.NewChallenge(factor, ipAddress)
 
-	err = a.db.Transaction(func(tx *storage.Connection) error {
+	err := a.db.Transaction(func(tx *storage.Connection) error {
 		if terr := tx.Create(challenge); terr != nil {
 			return terr
 		}
@@ -196,142 +195,6 @@ func (a *API) ChallengeFactor(w http.ResponseWriter, r *http.Request) error {
 		ID:        challenge.ID,
 		ExpiresAt: challenge.GetExpiryTime(config.MFA.ChallengeExpiryDuration).Unix(),
 	})
-}
-
-func (a *API) runHook(ctx context.Context, name string, input, output any) ([]byte, error) {
-	db := a.db.WithContext(ctx)
-
-	request, err := json.Marshal(input)
-	if err != nil {
-		panic(err)
-	}
-
-	var response []byte
-	if err := db.Transaction(func(tx *storage.Connection) error {
-		// We rely on Postgres timeouts to ensure the function doesn't overrun
-		if terr := tx.RawQuery(fmt.Sprintf("set local statement_timeout TO '%d';", hooks.DefaultTimeout)).Exec(); terr != nil {
-			return terr
-		}
-
-		if terr := tx.RawQuery(fmt.Sprintf("select %s(?);", name), request).First(&response); terr != nil {
-			return terr
-		}
-
-		// reset the timeout
-		if terr := tx.RawQuery("set local statement_timeout TO default;").Exec(); terr != nil {
-			return terr
-		}
-
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := json.Unmarshal(response, output); err != nil {
-		return response, err
-	}
-
-	return response, nil
-}
-
-func (a *API) invokeHook(ctx context.Context, input, output any) error {
-	config := a.config
-	switch input.(type) {
-	case *hooks.MFAVerificationAttemptInput:
-		hookOutput, ok := output.(*hooks.MFAVerificationAttemptOutput)
-		if !ok {
-			panic("output should be *hooks.MFAVerificationAttemptOutput")
-		}
-
-		if _, err := a.runHook(ctx, config.Hook.MFAVerificationAttempt.HookName, input, output); err != nil {
-			return internalServerError("Error invoking MFA verification hook.").WithInternalError(err)
-		}
-
-		if hookOutput.IsError() {
-			httpCode := hookOutput.HookError.HTTPCode
-
-			if httpCode == 0 {
-				httpCode = http.StatusInternalServerError
-			}
-
-			httpError := &HTTPError{
-				Code:    httpCode,
-				Message: hookOutput.HookError.Message,
-			}
-
-			return httpError.WithInternalError(&hookOutput.HookError)
-		}
-
-		return nil
-	case *hooks.PasswordVerificationAttemptInput:
-		hookOutput, ok := output.(*hooks.PasswordVerificationAttemptOutput)
-		if !ok {
-			panic("output should be *hooks.PasswordVerificationAttemptOutput")
-		}
-
-		if _, err := a.runHook(ctx, config.Hook.PasswordVerificationAttempt.HookName, input, output); err != nil {
-			return internalServerError("Error invoking password verification hook.").WithInternalError(err)
-		}
-
-		if hookOutput.IsError() {
-			httpCode := hookOutput.HookError.HTTPCode
-
-			if httpCode == 0 {
-				httpCode = http.StatusInternalServerError
-			}
-
-			httpError := &HTTPError{
-				Code:    httpCode,
-				Message: hookOutput.HookError.Message,
-			}
-
-			return httpError.WithInternalError(&hookOutput.HookError)
-		}
-
-		return nil
-	case *hooks.CustomAccessTokenInput:
-		hookOutput, ok := output.(*hooks.CustomAccessTokenOutput)
-		if !ok {
-			panic("output should be *hooks.CustomAccessTokenOutput")
-		}
-
-		if _, err := a.runHook(ctx, config.Hook.CustomAccessToken.HookName, input, output); err != nil {
-			return internalServerError("Error invoking access token hook.").WithInternalError(err)
-		}
-
-		if hookOutput.IsError() {
-			httpCode := hookOutput.HookError.HTTPCode
-
-			if httpCode == 0 {
-				httpCode = http.StatusInternalServerError
-			}
-
-			httpError := &HTTPError{
-				Code:    httpCode,
-				Message: hookOutput.HookError.Message,
-			}
-
-			return httpError.WithInternalError(&hookOutput.HookError)
-		}
-		if err := validateTokenClaims(hookOutput.Claims); err != nil {
-			httpCode := hookOutput.HookError.HTTPCode
-
-			if httpCode == 0 {
-				httpCode = http.StatusInternalServerError
-			}
-
-			httpError := &HTTPError{
-				Code:    httpCode,
-				Message: err.Error(),
-			}
-
-			return httpError
-		}
-		return nil
-
-	default:
-		panic("unknown hook input type")
-	}
 }
 
 func (a *API) VerifyFactor(w http.ResponseWriter, r *http.Request) error {
