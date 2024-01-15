@@ -25,6 +25,7 @@ const (
 	factorKey               = contextKey("factor")
 	sessionKey              = contextKey("session")
 	externalReferrerKey     = contextKey("external_referrer")
+	referralCodeKey         = contextKey("referral_code")
 	functionHooksKey        = contextKey("function_hooks")
 	adminUserKey            = contextKey("admin_user")
 	oauthTokenKey           = contextKey("oauth_token") // for OAuth1.0, also known as request token
@@ -188,6 +189,19 @@ func withExternalReferrer(ctx context.Context, token string) context.Context {
 
 func getExternalReferrer(ctx context.Context) string {
 	obj := ctx.Value(externalReferrerKey)
+	if obj == nil {
+		return ""
+	}
+
+	return obj.(string)
+}
+
+func withReferralCode(ctx context.Context, code string) context.Context {
+	return context.WithValue(ctx, referralCodeKey, code)
+}
+
+func getReferralCode(ctx context.Context) string {
+	obj := ctx.Value(referralCodeKey)
 	if obj == nil {
 		return ""
 	}

@@ -30,6 +30,7 @@ type ExternalProviderClaims struct {
 	Referrer        string `json:"referrer,omitempty"`
 	FlowStateID     string `json:"flow_state_id"`
 	LinkingTargetID string `json:"linking_target_id,omitempty"`
+	ReferralCode    string `json:"referral_code,omitempty"`
 }
 
 // ExternalProviderRedirect redirects the request to the oauth provider
@@ -94,6 +95,7 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 		flowStateID = flowState.ID.String()
 	}
 
+	referralCode := query.Get("referral_code")
 	claims := ExternalProviderClaims{
 		AuthMicroserviceClaims: AuthMicroserviceClaims{
 			StandardClaims: jwt.StandardClaims{
@@ -102,10 +104,11 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 			SiteURL:    config.SiteURL,
 			InstanceID: uuid.Nil.String(),
 		},
-		Provider:    providerType,
-		InviteToken: inviteToken,
-		Referrer:    redirectURL,
-		FlowStateID: flowStateID,
+		Provider:     providerType,
+		InviteToken:  inviteToken,
+		Referrer:     redirectURL,
+		ReferralCode: referralCode,
+		FlowStateID:  flowStateID,
 	}
 
 	if linkingTargetUser != nil {
@@ -334,6 +337,9 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 			return nil, terr
 		}
 
+		// Add ref code
+		user.UserMetaData["referral_code"] = getReferralCode(ctx)
+
 		if user, terr = a.signupNewUser(ctx, tx, user); terr != nil {
 			return nil, terr
 		}
@@ -510,6 +516,9 @@ func (a *API) loadExternalState(ctx context.Context, state string) (context.Cont
 	}
 	if claims.Referrer != "" {
 		ctx = withExternalReferrer(ctx, claims.Referrer)
+	}
+	if claims.ReferralCode != "" {
+		ctx = withReferralCode(ctx, claims.ReferralCode)
 	}
 	if claims.FlowStateID != "" {
 		ctx = withFlowStateID(ctx, claims.FlowStateID)
