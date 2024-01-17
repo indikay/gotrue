@@ -31,6 +31,7 @@ type ExternalProviderClaims struct {
 	FlowStateID     string `json:"flow_state_id"`
 	LinkingTargetID string `json:"linking_target_id,omitempty"`
 	ReferralCode    string `json:"referral_code,omitempty"`
+	Locale          string `json:"locale,omitempty"`
 }
 
 // ExternalProviderRedirect redirects the request to the oauth provider
@@ -339,6 +340,8 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 
 		// Add ref code
 		user.UserMetaData["referral_code"] = getReferralCode(ctx)
+		// Add locale register
+		user.UserMetaData["locale"] = getLocale(ctx)
 
 		if user, terr = a.signupNewUser(ctx, tx, user); terr != nil {
 			return nil, terr
@@ -516,6 +519,12 @@ func (a *API) loadExternalState(ctx context.Context, state string) (context.Cont
 	}
 	if claims.Referrer != "" {
 		ctx = withExternalReferrer(ctx, claims.Referrer)
+	}
+	if claims.ReferralCode != "" {
+		ctx = withReferralCode(ctx, claims.ReferralCode)
+	}
+	if claims.ReferralCode != "" {
+		ctx = withLocale(ctx, claims.Locale)
 	}
 	if claims.ReferralCode != "" {
 		ctx = withReferralCode(ctx, claims.ReferralCode)
