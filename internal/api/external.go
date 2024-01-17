@@ -97,6 +97,7 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 	}
 
 	referralCode := query.Get("referral_code")
+	locale := query.Get("locale")
 	claims := ExternalProviderClaims{
 		AuthMicroserviceClaims: AuthMicroserviceClaims{
 			StandardClaims: jwt.StandardClaims{
@@ -109,6 +110,7 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 		InviteToken:  inviteToken,
 		Referrer:     redirectURL,
 		ReferralCode: referralCode,
+		Locale:       locale,
 		FlowStateID:  flowStateID,
 	}
 
