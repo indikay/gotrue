@@ -283,25 +283,26 @@ func (a *API) Signup(w http.ResponseWriter, r *http.Request) error {
 			return tooManyRequestsError("For security purposes, you can only request this once every minute")
 		}
 		if errors.Is(err, UserExistsError) {
-			err = db.Transaction(func(tx *storage.Connection) error {
-				if terr := models.NewAuditLogEntry(r, tx, user, models.UserRepeatedSignUpAction, "", map[string]interface{}{
-					"provider": params.Provider,
-				}); terr != nil {
-					return terr
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			if config.Mailer.Autoconfirm || config.Sms.Autoconfirm {
-				return badRequestError("User already registered")
-			}
-			sanitizedUser, err := sanitizeUser(user, params)
-			if err != nil {
-				return err
-			}
-			return sendJSON(w, http.StatusOK, sanitizedUser)
+			return badRequestError("User already registered")
+			// err = db.Transaction(func(tx *storage.Connection) error {
+			// 	if terr := models.NewAuditLogEntry(r, tx, user, models.UserRepeatedSignUpAction, "", map[string]interface{}{
+			// 		"provider": params.Provider,
+			// 	}); terr != nil {
+			// 		return terr
+			// 	}
+			// 	return nil
+			// })
+			// if err != nil {
+			// 	return err
+			// }
+			// if config.Mailer.Autoconfirm || config.Sms.Autoconfirm {
+			// 	return badRequestError("User already registered")
+			// }
+			// sanitizedUser, err := sanitizeUser(user, params)
+			// if err != nil {
+			// 	return err
+			// }
+			// return sendJSON(w, http.StatusOK, sanitizedUser)
 		}
 		return err
 	}
