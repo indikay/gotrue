@@ -280,10 +280,10 @@ func (a *API) Signup(w http.ResponseWriter, r *http.Request) error {
 
 	if err != nil {
 		if errors.Is(err, MaxFrequencyLimitError) {
-			return tooManyRequestsError("For security purposes, you can only request this once every minute")
+			return CustomHttpError(http.StatusBadRequest, "TOO_MANY_REQUEST", "For security purposes, you can only request this once every minute")
 		}
 		if errors.Is(err, UserExistsError) {
-			return badRequestError("User already registered")
+			return CustomHttpError(http.StatusBadRequest, "EMAIL_EXISTED", "Email already registered")
 			// err = db.Transaction(func(tx *storage.Connection) error {
 			// 	if terr := models.NewAuditLogEntry(r, tx, user, models.UserRepeatedSignUpAction, "", map[string]interface{}{
 			// 		"provider": params.Provider,

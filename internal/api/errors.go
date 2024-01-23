@@ -84,6 +84,10 @@ func oauthError(err string, description string) *OAuthError {
 	return &OAuthError{Err: err, Description: description}
 }
 
+// func badRequestError(fmtString string, args ...interface{}) *HTTPError {
+// 	return httpError(http.StatusBadRequest, fmtString, args...)
+// }
+
 func badRequestError(fmtString string, args ...interface{}) *HTTPError {
 	return httpError(http.StatusBadRequest, fmtString, args...)
 }
@@ -127,6 +131,7 @@ type HTTPError struct {
 	InternalError   error  `json:"-"`
 	InternalMessage string `json:"-"`
 	ErrorID         string `json:"error_id,omitempty"`
+	Key             string `json:"key,omitempty"`
 }
 
 func (e *HTTPError) Error() string {
@@ -161,6 +166,13 @@ func (e *HTTPError) WithInternalMessage(fmtString string, args ...interface{}) *
 }
 
 func httpError(code int, fmtString string, args ...interface{}) *HTTPError {
+	return &HTTPError{
+		Code:    code,
+		Message: fmt.Sprintf(fmtString, args...),
+	}
+}
+
+func CustomHttpError(code int, key string, fmtString string, args ...interface{}) *HTTPError {
 	return &HTTPError{
 		Code:    code,
 		Message: fmt.Sprintf(fmtString, args...),
@@ -274,7 +286,10 @@ func handleError(err error, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if jsonErr := sendJSON(w, e.Code, e); jsonErr != nil {
+		code := e.Code
+		e.Code = 1
+
+		if jsonErr := sendJSON(w, code, e); jsonErr != nil {
 			handleError(jsonErr, w, r)
 		}
 	case *OAuthError:
