@@ -175,6 +175,7 @@ func httpError(code int, fmtString string, args ...interface{}) *HTTPError {
 func CustomHttpError(code int, key string, fmtString string, args ...interface{}) *HTTPError {
 	return &HTTPError{
 		Code:    code,
+		Key:     key,
 		Message: fmt.Sprintf(fmtString, args...),
 	}
 }
@@ -286,10 +287,9 @@ func handleError(err error, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		code := e.Code
 		e.Code = 1
 
-		if jsonErr := sendJSON(w, code, e); jsonErr != nil {
+		if jsonErr := sendJSON(w, http.StatusOK, e); jsonErr != nil {
 			handleError(jsonErr, w, r)
 		}
 	case *OAuthError:
