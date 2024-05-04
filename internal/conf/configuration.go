@@ -215,6 +215,7 @@ type GlobalConfiguration struct {
 	Mailer          MailerConfiguration      `json:"mailer"`
 	UseMailService  bool                     `json:"use_mail_service" split_words:"true"`
 	MailService     MailServiceConfiguration `json:"mail_service" split_words:"true"`
+	MFAService      MFAServiceConfiguration  `json:"mfa_service" split_words:"true"`
 	Sms             SmsProviderConfiguration `json:"sms"`
 	DisableSignup   bool                     `json:"disable_signup" split_words:"true"`
 	Webhook         WebhookConfig            `json:"webhook" split_words:"true"`
@@ -324,6 +325,12 @@ type MailerConfiguration struct {
 }
 
 type MailServiceConfiguration struct {
+	URL     string `json:"url"`
+	Timeout int    `json:"timeout"`
+	Retries int    `json:"retries"`
+}
+
+type MFAServiceConfiguration struct {
 	URL     string `json:"url"`
 	Timeout int    `json:"timeout"`
 	Retries int    `json:"retries"`

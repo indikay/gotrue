@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/aaronarduino/goqrsvg"
 	svg "github.com/ajstarks/svgo"
 	"github.com/boombuler/barcode/qr"
 	"github.com/gofrs/uuid"
 	"github.com/pquerna/otp/totp"
+	"github.com/sirupsen/logrus"
 	"github.com/supabase/auth/internal/hooks"
 	"github.com/supabase/auth/internal/metering"
 	"github.com/supabase/auth/internal/models"
@@ -52,6 +55,11 @@ type ChallengeFactorResponse struct {
 
 type UnenrollFactorResponse struct {
 	ID uuid.UUID `json:"id"`
+}
+
+type VerifyMFAParams struct {
+	ChallengeID string `json:"challenge_id"`
+	Code        string `json:"code"`
 }
 
 const (
@@ -366,4 +374,75 @@ func (a *API) UnenrollFactor(w http.ResponseWriter, r *http.Request) error {
 	return sendJSON(w, http.StatusOK, &UnenrollFactorResponse{
 		ID: factor.ID,
 	})
+}
+
+func (a *API) VerifyMFA(w http.ResponseWriter, r *http.Request) error {
+	var err error
+	ctx := r.Context()
+	user := getUser(ctx)
+	config := a.config
+
+	params := &VerifyMFAParams{}
+	currentIP := utilities.GetIPAddress(r)
+
+	body, err := getBodyBytes(r)
+	if err != nil {
+		return internalServerError("Could not read body").WithInternalError(err)
+	}
+
+	if err := json.Unmarshal(body, params); err != nil {
+		return badRequestError("invalid body: unable to parse JSON").WithInternalError(err)
+	}
+
+	client := http.Client{
+		Timeout: time.Second * time.Duration(a.config.MFAService.Timeout),
+	}
+
+	payload := []byte(fmt.Sprintf(`{"challenge_id": "%s", "code": "%s", "user_id": "%s", "user_ip": "%s"}`, params.ChallengeID, params.Code, user.ID.String(), currentIP))
+
+	req, err := http.NewRequest(http.MethodPut, a.config.MFAService.URL, bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// logrus.Infof("VerifyMFA Payload %s", string(payload))
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	logrus.Infof("VerifyMFA Status %s", resp.Status)
+	if resp.StatusCode == 200 {
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		data := make(map[string]interface{})
+		json.Unmarshal(respBody, &data)
+		if data["code"].(float64) > 0 {
+			if data["msgKey"] != nil {
+				return badRequestError(data["msgKey"].(string))
+			} else {
+				return badRequestError("UNKNOWN")
+			}
+		}
+	}
+
+	var token *AccessTokenResponse
+	user, err = models.FindUserByID(a.db, user.ID)
+	if err != nil {
+		return err
+	}
+	token, err = a.updateMFASessionAndClaims(r, a.db, user, models.TOTPSignIn, models.GrantParams{})
+	if err != nil {
+		return err
+	}
+	if err = a.setCookieTokens(config, token, false, w); err != nil {
+		return internalServerError("Failed to set JWT cookie. %s", err)
+	}
+	if err != nil {
+		return err
+	}
+
+	return sendJSON(w, http.StatusOK, token)
 }
