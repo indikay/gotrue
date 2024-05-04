@@ -1,0 +1,27 @@
+name: Build Image and Deploy
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  buildndeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and Deploy Image
+        uses: https://${{ secrets.JARVIS_TOKEN }}:@git.indikay.dev/indikay/ci-actions/build-push@main
+        with:
+          jarvis_token: ${{ secrets.JARVIS_TOKEN }}
+          deploy_url: ${{ secrets.IND_DEPLOY_WEBHOOK }}
+          build_args: |
+            GITHUB_ACCESS_USER=user
+            GITHUB_ACCESS_TOKEN=${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Notify status
+        if: ${{ always() }}
+        uses: https://${{ secrets.JARVIS_TOKEN }}:@git.indikay.dev/indikay/ci-actions/notify-lark@main
+        with:
+          webhook: ${{ secrets.LARK_CI_WEBHOOK }}
+          type: ${{ job.status }}
+          message: "[${{ github.repository }}:${{ github.ref_name }}] CD pipeline status: ${{ job.status }}"
